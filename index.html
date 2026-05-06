@@ -20,6 +20,14 @@
     <button id="prevBtn" disabled>&larr; Previous</button>
     <button id="nextBtn" disabled>Next knot &rarr;</button>
     <button id="resetBtn" disabled>Reset</button>
+    <label class="checkbox-label">
+      <input type="checkbox" id="zoomToggle" checked>
+      Zoom to row
+    </label>
+    <label class="checkbox-label">
+      <input type="checkbox" id="showAllToggle">
+      Show all detections
+    </label>
   </section>
 
   <section class="tuning" id="tuning" hidden>
@@ -28,8 +36,8 @@
       <div class="tuning-row">
         <label>
           Sensitivity
-          <input type="range" id="sensitivity" min="10" max="60" value="22">
-          <span id="sensitivityValue">22</span>
+          <input type="range" id="sensitivity" min="10" max="60" value="28">
+          <span id="sensitivityValue">28</span>
         </label>
         <label>
           Min radius
@@ -38,13 +46,18 @@
         </label>
         <label>
           Max radius
-          <input type="range" id="maxRadius" min="5" max="120" value="28">
-          <span id="maxRadiusValue">28</span>
+          <input type="range" id="maxRadius" min="5" max="120" value="32">
+          <span id="maxRadiusValue">32</span>
         </label>
         <label>
           Min distance
-          <input type="range" id="minDist" min="5" max="120" value="18">
-          <span id="minDistValue">18</span>
+          <input type="range" id="minDist" min="5" max="120" value="20">
+          <span id="minDistValue">20</span>
+        </label>
+        <label>
+          Arrow strictness
+          <input type="range" id="arrowStrictness" min="0" max="100" value="50">
+          <span id="arrowStrictnessValue">50</span>
         </label>
         <button id="redetectBtn">Re-detect</button>
       </div>
@@ -54,6 +67,13 @@
   <section class="status">
     <span id="status">Loading image processor…</span>
     <span id="counter"></span>
+  </section>
+
+  <section class="zoom-section" id="zoomSection" hidden>
+    <h3>Current row</h3>
+    <div class="zoom-wrap">
+      <canvas id="zoomCanvas"></canvas>
+    </div>
   </section>
 
   <section class="canvas-wrap">
