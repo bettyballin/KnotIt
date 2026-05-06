@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KnotIt — Knitting Pattern Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>KnotIt</h1>
+    <p class="tagline">Upload a pattern, then step through each knot left-to-right, top-to-bottom.</p>
+  </header>
+
+  <section class="controls">
+    <label class="file-label">
+      <input type="file" id="fileInput" accept="image/*">
+      <span>Upload pattern</span>
+    </label>
+    <button id="prevBtn" disabled>&larr; Previous</button>
+    <button id="nextBtn" disabled>Next knot &rarr;</button>
+    <button id="resetBtn" disabled>Reset</button>
+  </section>
+
+  <section class="tuning" id="tuning" hidden>
+    <details>
+      <summary>Detection settings (tweak if knots are missed or duplicated)</summary>
+      <div class="tuning-row">
+        <label>
+          Sensitivity
+          <input type="range" id="sensitivity" min="10" max="60" value="22">
+          <span id="sensitivityValue">22</span>
+        </label>
+        <label>
+          Min radius
+          <input type="range" id="minRadius" min="2" max="60" value="6">
+          <span id="minRadiusValue">6</span>
+        </label>
+        <label>
+          Max radius
+          <input type="range" id="maxRadius" min="5" max="120" value="28">
+          <span id="maxRadiusValue">28</span>
+        </label>
+        <label>
+          Min distance
+          <input type="range" id="minDist" min="5" max="120" value="18">
+          <span id="minDistValue">18</span>
+        </label>
+        <button id="redetectBtn">Re-detect</button>
+      </div>
+    </details>
+  </section>
+
+  <section class="status">
+    <span id="status">Loading image processor…</span>
+    <span id="counter"></span>
+  </section>
+
+  <section class="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </section>
+
+  <footer>
+    <p>Tip: press <kbd>Space</kbd> or <kbd>&rarr;</kbd> for next knot, <kbd>&larr;</kbd> for previous.</p>
+  </footer>
+
+  <script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window.__cvScriptLoaded=true"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 24px;
+  background: #f6f5f1;
+  color: #23211d;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 0 0 18px;
+  color: #6b6660;
+  font-size: 14px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+button,
+.file-label > span {
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid #d1ccc2;
+  border-radius: 8px;
+  background: #fff;
+  color: #23211d;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+button:hover:not(:disabled),
+.file-label:hover > span {
+  background: #efece5;
+  border-color: #b8b2a4;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#nextBtn {
+  background: #d2452f;
+  color: #fff;
+  border-color: #b13a26;
+}
+
+#nextBtn:hover:not(:disabled) {
+  background: #b13a26;
+}
+
+.file-label {
+  display: inline-block;
+}
+
+.file-label > input[type="file"] {
+  display: none;
+}
+
+.tuning {
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid #e1ddd3;
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+.tuning summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #6b6660;
+  padding: 4px 0;
+}
+
+.tuning-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 0 4px;
+  font-size: 13px;
+}
+
+.tuning-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tuning-row input[type="range"] {
+  width: 120px;
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  color: #4a4640;
+  margin-bottom: 10px;
+  min-height: 20px;
+}
+
+#counter {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.canvas-wrap {
+  background: #fff;
+  border: 1px solid #e1ddd3;
+  border-radius: 8px;
+  overflow: auto;
+  padding: 10px;
+  max-height: 80vh;
+}
+
+canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+footer {
+  margin-top: 18px;
+  font-size: 12px;
+  color: #8a857c;
+}
+
+kbd {
+  background: #fff;
+  border: 1px solid #d1ccc2;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+}
