@@ -66,6 +66,38 @@ button:disabled {
   background: #b13a26;
 }
 
+#lockBtn.locked {
+  background: #2e7d4f;
+  color: #fff;
+  border-color: #226039;
+}
+
+#lockBtn.locked:hover:not(:disabled) {
+  background: #226039;
+}
+
+.row-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #4a4640;
+}
+
+.row-jump input[type="number"] {
+  width: 64px;
+  padding: 7px 8px;
+  border: 1px solid #d1ccc2;
+  border-radius: 6px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-jump input[type="number"]:disabled {
+  background: #f0ede5;
+  color: #a39e92;
+}
+
 .file-label {
   display: inline-block;
 }

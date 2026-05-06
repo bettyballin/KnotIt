@@ -5,6 +5,9 @@
   const nextBtn = document.getElementById("nextBtn");
   const prevBtn = document.getElementById("prevBtn");
   const resetBtn = document.getElementById("resetBtn");
+  const lockBtn = document.getElementById("lockBtn");
+  const rowInput = document.getElementById("rowInput");
+  const rowTotal = document.getElementById("rowTotal");
   const rematchBtn = document.getElementById("rematchBtn");
   const templateSection = document.getElementById("templateSection");
   const templateHint = document.getElementById("templateHint");
@@ -40,6 +43,7 @@
   let templateMat = null;             // grayscale cv.Mat of the user-picked template
   let templateCenter = null;          // {x, y} in canvas pixel space
   let templateExtractedSize = 0;      // px size used when extracted
+  let templateLocked = false;         // if true, canvas clicks navigate instead of re-picking
   let knots = [];                     // [{x, y, r, rowIndex, score}]
   let knotsByRow = [];
   let currentIndex = 0;
@@ -49,12 +53,59 @@
     if (knots.length === 0) { counterEl.textContent = ""; return; }
     const k = knots[currentIndex];
     counterEl.textContent = `Row ${k.rowIndex + 1} · Knot ${currentIndex + 1} of ${knots.length}`;
+    if (document.activeElement !== rowInput) {
+      rowInput.value = String(k.rowIndex + 1);
+    }
   };
   const setStepEnabled = (enabled) => {
     nextBtn.disabled = !enabled;
     prevBtn.disabled = !enabled;
     resetBtn.disabled = !enabled;
+    rowInput.disabled = !enabled;
+    if (enabled) {
+      rowInput.min = "1";
+      rowInput.max = String(knotsByRow.length);
+      rowTotal.textContent = `/ ${knotsByRow.length}`;
+    } else {
+      rowTotal.textContent = "/ —";
+    }
   };
+
+  function setTemplateLocked(locked) {
+    templateLocked = locked;
+    lockBtn.textContent = locked ? "Unlock template" : "Lock template";
+    lockBtn.classList.toggle("locked", locked);
+    canvas.style.cursor = !templateMat
+      ? "crosshair"
+      : locked
+        ? "pointer"
+        : "crosshair";
+  }
+
+  function gotoRow(rowIndex0) {
+    if (knotsByRow.length === 0) return;
+    const r = Math.max(0, Math.min(rowIndex0, knotsByRow.length - 1));
+    const first = knotsByRow[r][0];
+    const idx = knots.indexOf(first);
+    if (idx >= 0) {
+      currentIndex = idx;
+      render();
+    }
+  }
+
+  function jumpToNearestKnot(px, py) {
+    if (knots.length === 0) return;
+    let bestIdx = 0;
+    let bestD2 = Infinity;
+    for (let i = 0; i < knots.length; i++) {
+      const dx = knots[i].x - px;
+      const dy = knots[i].y - py;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
+    }
+    currentIndex = bestIdx;
+    render();
+  }
 
   function waitForCv() {
     return new Promise((resolve) => {
@@ -125,6 +176,7 @@
 
     showTemplatePreview();
     rematchBtn.disabled = false;
+    lockBtn.disabled = false;
     runMatching();
   }
 
@@ -433,6 +485,8 @@
     if (templateMat) { templateMat.delete(); templateMat = null; }
     templateCenter = null;
     rematchBtn.disabled = true;
+    lockBtn.disabled = true;
+    setTemplateLocked(false);
     try {
       setStatus("Loading image…");
       currentImage = await loadImageFromFile(file);
@@ -452,10 +506,18 @@
     }
   });
 
+  function handleCanvasPick(p) {
+    if (templateLocked) {
+      jumpToNearestKnot(p.x, p.y);
+    } else {
+      setTemplate(p.x, p.y);
+    }
+  }
+
   canvas.addEventListener("click", (e) => {
     const p = canvasPointFromEvent(e);
     if (!p) return;
-    setTemplate(p.x, p.y);
+    handleCanvasPick(p);
   });
 
   canvas.addEventListener("touchstart", (e) => {
@@ -463,8 +525,18 @@
     e.preventDefault();
     const p = canvasPointFromEvent(e);
     if (!p) return;
-    setTemplate(p.x, p.y);
+    handleCanvasPick(p);
   }, { passive: false });
+
+  lockBtn.addEventListener("click", () => {
+    if (!templateMat) return;
+    setTemplateLocked(!templateLocked);
+  });
+
+  rowInput.addEventListener("change", () => {
+    const r = parseInt(rowInput.value, 10);
+    if (Number.isFinite(r)) gotoRow(r - 1);
+  });
 
   nextBtn.addEventListener("click", next);
   prevBtn.addEventListener("click", prev);
