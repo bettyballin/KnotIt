@@ -98,9 +98,9 @@
   // the annulus is sampled tightly inside the outline so its colour doesn't
   // matter, only that it's uniform.
   function hasArrow(grayMat, c, strictness) {
-    const innerR = c.r * 0.45;   // central area where the arrow lives
-    const annR1 = c.r * 0.50;    // ring of pure fill, well inside the outline
-    const annR2 = c.r * 0.75;
+    const innerR = c.r * 0.40;   // tighter inner so a small arrow still dominates
+    const annR1 = c.r * 0.55;    // pure-fill ring, well inside the outline
+    const annR2 = c.r * 0.78;
     const range = Math.ceil(annR2 + 1);
     const cx = Math.round(c.x), cy = Math.round(c.y);
 
@@ -139,22 +139,31 @@
     const innerMean = mean(innerVals);
     const innerStd = std(innerVals, innerMean);
 
+    // Robust "darkest pixels" estimate — survives a small arrow stroke that
+    // wouldn't move the std much but still produces a few clearly dark pixels.
+    const sortedInner = [...innerVals].sort((a, b) => a - b);
+    const p10Idx = Math.max(0, Math.floor(sortedInner.length * 0.1));
+    const innerP10 = sortedInner[p10Idx];
+
     const t = strictness / 100;
 
-    // Fill should be reasonably uniform — but the colour itself doesn't matter.
-    const annStdMax = 18 + (1 - t) * 25; // 18..43
+    // Fill ring must be uniform — colour itself doesn't matter.
+    const annStdMax = 18 + (1 - t) * 30; // 18..48
     if (annStd > annStdMax) return false;
 
-    // Reject if the candidate is sitting on plain white background (no fill).
+    // Fill ring can't be plain white background.
     if (annMean > 245) return false;
 
-    // The arrow contributes extra texture beyond what's in the fill ring.
-    const minExtraStd = 4 + t * 9; // 4..13
-    if (innerStd < annStd + minExtraStd) return false;
+    // Arrow signal: EITHER inner has noticeably more texture than the fill,
+    // OR the darkest 10% of inner pixels are clearly darker than the fill.
+    // The OR makes us robust to small arrows where the std stays low.
+    const stdSignal = innerStd > annStd + 4 + t * 7;
+    const darkSignal = innerP10 < annMean - (22 + t * 18);
+    if (!stdSignal && !darkSignal) return false;
 
-    // The arrow is a dark mark, so the inner mean should be at least as dark
-    // as the fill (allow a small margin for noise / specular highlights).
-    if (innerMean > annMean + 25) return false;
+    // The inner can't be substantially brighter than the fill (rules out
+    // highlights / pinholes in the middle of the disc).
+    if (innerMean > annMean + 30) return false;
 
     return true;
   }
@@ -204,7 +213,9 @@
         gray = new cv.Mat();
         blurred = new cv.Mat();
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        cv.medianBlur(gray, blurred, 5);
+        // Light blur only — a 5-pixel median wiped out weak outlines (esp. on
+        // the lighter circles), causing Hough to miss them.
+        cv.medianBlur(gray, blurred, 3);
 
         circlesMat = new cv.Mat();
         cv.HoughCircles(
@@ -213,7 +224,7 @@
           cv.HOUGH_GRADIENT,
           1,
           parseInt(minDist.value, 10),
-          100,
+          60, // Canny upper — was 100; lower lets weaker outlines (yellow) vote.
           parseInt(sensitivity.value, 10),
           parseInt(minRadius.value, 10),
           parseInt(maxRadius.value, 10)
