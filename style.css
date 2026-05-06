@@ -74,19 +74,53 @@ button:disabled {
   display: none;
 }
 
-.tuning {
+.template-section {
   margin-bottom: 12px;
   background: #fff;
   border: 1px solid #e1ddd3;
   border-radius: 8px;
-  padding: 8px 14px;
+  padding: 12px 14px;
 }
 
-.tuning summary {
-  cursor: pointer;
+.template-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.template-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.template-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b6660;
+  font-weight: 600;
+}
+
+.template-preview {
+  width: 96px;
+  height: 96px;
+  background: repeating-conic-gradient(#e8e4da 0 25%, #f6f5f1 0 50%) 50% / 16px 16px;
+  border: 1px solid #d1ccc2;
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.template-controls {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint {
+  margin: 0 0 8px;
   font-size: 13px;
   color: #6b6660;
-  padding: 4px 0;
 }
 
 .tuning-row {
@@ -94,7 +128,6 @@ button:disabled {
   flex-wrap: wrap;
   gap: 14px;
   align-items: center;
-  padding: 10px 0 4px;
   font-size: 13px;
 }
 
@@ -106,6 +139,10 @@ button:disabled {
 
 .tuning-row input[type="range"] {
   width: 120px;
+}
+
+@media (max-width: 600px) {
+  .template-row { flex-direction: column; }
 }
 
 .status {

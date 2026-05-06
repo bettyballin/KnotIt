@@ -5,8 +5,11 @@
   const nextBtn = document.getElementById("nextBtn");
   const prevBtn = document.getElementById("prevBtn");
   const resetBtn = document.getElementById("resetBtn");
-  const redetectBtn = document.getElementById("redetectBtn");
-  const tuningSection = document.getElementById("tuning");
+  const rematchBtn = document.getElementById("rematchBtn");
+  const templateSection = document.getElementById("templateSection");
+  const templateHint = document.getElementById("templateHint");
+  const templateCanvas = document.getElementById("templateCanvas");
+  const tplCtx = templateCanvas.getContext("2d");
   const statusEl = document.getElementById("status");
   const counterEl = document.getElementById("counter");
   const canvas = document.getElementById("canvas");
@@ -17,30 +20,28 @@
   const zoomToggle = document.getElementById("zoomToggle");
   const showAllToggle = document.getElementById("showAllToggle");
 
-  const sensitivity = document.getElementById("sensitivity");
-  const minRadius = document.getElementById("minRadius");
-  const maxRadius = document.getElementById("maxRadius");
-  const minDist = document.getElementById("minDist");
-  const arrowStrictness = document.getElementById("arrowStrictness");
+  const templateSize = document.getElementById("templateSize");
+  const matchThreshold = document.getElementById("matchThreshold");
+  const rotationCount = document.getElementById("rotationCount");
+  const matchInverted = document.getElementById("matchInverted");
 
   for (const [input, valueId] of [
-    [sensitivity, "sensitivityValue"],
-    [minRadius, "minRadiusValue"],
-    [maxRadius, "maxRadiusValue"],
-    [minDist, "minDistValue"],
-    [arrowStrictness, "arrowStrictnessValue"],
+    [templateSize, "templateSizeValue"],
+    [matchThreshold, "matchThresholdValue"],
+    [rotationCount, "rotationCountValue"],
   ]) {
     const valueEl = document.getElementById(valueId);
     valueEl.textContent = input.value;
-    input.addEventListener("input", () => {
-      valueEl.textContent = input.value;
-    });
+    input.addEventListener("input", () => { valueEl.textContent = input.value; });
   }
 
   let cvReady = false;
   let currentImage = null;
-  let knots = []; // {x, y, r, rowIndex}
-  let knotsByRow = []; // [[knot, knot, ...], ...]
+  let templateMat = null;             // grayscale cv.Mat of the user-picked template
+  let templateCenter = null;          // {x, y} in canvas pixel space
+  let templateExtractedSize = 0;      // px size used when extracted
+  let knots = [];                     // [{x, y, r, rowIndex, score}]
+  let knotsByRow = [];
   let currentIndex = 0;
 
   const setStatus = (text) => { statusEl.textContent = text; };
@@ -49,7 +50,7 @@
     const k = knots[currentIndex];
     counterEl.textContent = `Row ${k.rowIndex + 1} · Knot ${currentIndex + 1} of ${knots.length}`;
   };
-  const setControlsEnabled = (enabled) => {
+  const setStepEnabled = (enabled) => {
     nextBtn.disabled = !enabled;
     prevBtn.disabled = !enabled;
     resetBtn.disabled = !enabled;
@@ -93,79 +94,194 @@
     ctx.drawImage(currentImage, 0, 0);
   }
 
-  // Returns true if a small dark mark (arrow) lives inside the circle on top of
-  // a relatively uniform colour fill. Works for both dark and light fills:
-  // the annulus is sampled tightly inside the outline so its colour doesn't
-  // matter, only that it's uniform.
-  function hasArrow(grayMat, c, strictness) {
-    const innerR = c.r * 0.40;   // tighter inner so a small arrow still dominates
-    const annR1 = c.r * 0.55;    // pure-fill ring, well inside the outline
-    const annR2 = c.r * 0.78;
-    const range = Math.ceil(annR2 + 1);
-    const cx = Math.round(c.x), cy = Math.round(c.y);
+  function setTemplate(centerX, centerY) {
+    if (!currentImage || !cvReady) return;
+    const size = parseInt(templateSize.value, 10);
+    const half = Math.floor(size / 2);
+    const x0 = Math.max(0, Math.floor(centerX - half));
+    const y0 = Math.max(0, Math.floor(centerY - half));
+    const x1 = Math.min(canvas.width, x0 + size);
+    const y1 = Math.min(canvas.height, y0 + size);
+    const w = x1 - x0;
+    const h = y1 - y0;
+    if (w < 8 || h < 8) {
+      setStatus("Pick a spot away from the edge so the template fits.");
+      return;
+    }
 
-    const innerVals = [];
-    const annulusVals = [];
-    const innerR2 = innerR * innerR;
-    const ann1Sq = annR1 * annR1;
-    const ann2Sq = annR2 * annR2;
+    let src, gray;
+    try {
+      src = cv.imread(canvas);
+      gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      if (templateMat) { templateMat.delete(); templateMat = null; }
+      templateMat = gray.roi(new cv.Rect(x0, y0, w, h)).clone();
+      templateCenter = { x: centerX, y: centerY };
+      templateExtractedSize = Math.min(w, h);
+    } finally {
+      if (src) src.delete();
+      if (gray) gray.delete();
+    }
 
-    for (let dy = -range; dy <= range; dy++) {
-      const y = cy + dy;
-      if (y < 0 || y >= grayMat.rows) continue;
-      for (let dx = -range; dx <= range; dx++) {
-        const x = cx + dx;
-        if (x < 0 || x >= grayMat.cols) continue;
-        const d2 = dx * dx + dy * dy;
-        if (d2 <= innerR2) {
-          innerVals.push(grayMat.ucharPtr(y, x)[0]);
-        } else if (d2 >= ann1Sq && d2 <= ann2Sq) {
-          annulusVals.push(grayMat.ucharPtr(y, x)[0]);
-        }
+    showTemplatePreview();
+    rematchBtn.disabled = false;
+    runMatching();
+  }
+
+  function showTemplatePreview() {
+    if (!templateMat) return;
+    const w = templateMat.cols, h = templateMat.rows;
+    const tmp = document.createElement("canvas");
+    tmp.width = w; tmp.height = h;
+    const tmpCtx = tmp.getContext("2d");
+    const imageData = tmpCtx.createImageData(w, h);
+    const data = templateMat.data;
+    for (let i = 0; i < w * h; i++) {
+      const v = data[i];
+      imageData.data[i * 4] = v;
+      imageData.data[i * 4 + 1] = v;
+      imageData.data[i * 4 + 2] = v;
+      imageData.data[i * 4 + 3] = 255;
+    }
+    tmpCtx.putImageData(imageData, 0, 0);
+
+    const display = 96;
+    templateCanvas.width = display;
+    templateCanvas.height = display;
+    tplCtx.imageSmoothingEnabled = true;
+    tplCtx.imageSmoothingQuality = "high";
+    tplCtx.clearRect(0, 0, display, display);
+    tplCtx.drawImage(tmp, 0, 0, display, display);
+  }
+
+  function findPeaks(result, threshold, minDist) {
+    const dilated = new cv.Mat();
+    const ksize = Math.max(3, Math.floor(minDist) | 1);
+    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(ksize, ksize));
+    cv.dilate(result, dilated, kernel);
+
+    const peaks = [];
+    const cols = result.cols;
+    const rows = result.rows;
+    const rData = result.data32F;
+    const dData = dilated.data32F;
+    for (let y = 0; y < rows; y++) {
+      const rowOff = y * cols;
+      for (let x = 0; x < cols; x++) {
+        const v = rData[rowOff + x];
+        if (v < threshold) continue;
+        if (v >= dData[rowOff + x] - 1e-6) peaks.push({ x, y, val: v });
       }
     }
 
-    if (innerVals.length < 6 || annulusVals.length < 6) return false;
+    dilated.delete();
+    kernel.delete();
+    return peaks;
+  }
 
-    const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
-    const std = (arr, m) => {
-      let s = 0;
-      for (const v of arr) s += (v - m) * (v - m);
-      return Math.sqrt(s / arr.length);
-    };
+  function rotatedTemplate(base, angleDeg) {
+    if (angleDeg === 0) return base;
+    const cx = base.cols / 2, cy = base.rows / 2;
+    const M = cv.getRotationMatrix2D(new cv.Point(cx, cy), angleDeg, 1);
+    const rotated = new cv.Mat();
+    cv.warpAffine(
+      base, rotated, M,
+      new cv.Size(base.cols, base.rows),
+      cv.INTER_LINEAR, cv.BORDER_REPLICATE
+    );
+    M.delete();
+    return rotated;
+  }
 
-    const annMean = mean(annulusVals);
-    const annStd = std(annulusVals, annMean);
-    const innerMean = mean(innerVals);
-    const innerStd = std(innerVals, innerMean);
+  function runMatching() {
+    if (!templateMat || !currentImage) return;
+    setStatus("Matching template across the pattern…");
 
-    // Robust "darkest pixels" estimate — survives a small arrow stroke that
-    // wouldn't move the std much but still produces a few clearly dark pixels.
-    const sortedInner = [...innerVals].sort((a, b) => a - b);
-    const p10Idx = Math.max(0, Math.floor(sortedInner.length * 0.1));
-    const innerP10 = sortedInner[p10Idx];
+    requestAnimationFrame(() => setTimeout(doMatching, 0));
+  }
 
-    const t = strictness / 100;
+  function doMatching() {
+    let src, gray, maxResp;
+    const tempMats = [];
+    try {
+      src = cv.imread(canvas);
+      gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    // Fill ring must be uniform — colour itself doesn't matter.
-    const annStdMax = 18 + (1 - t) * 30; // 18..48
-    if (annStd > annStdMax) return false;
+      const tplW = templateMat.cols;
+      const tplH = templateMat.rows;
+      const halfW = tplW / 2;
+      const halfH = tplH / 2;
 
-    // Fill ring can't be plain white background.
-    if (annMean > 245) return false;
+      const nRot = parseInt(rotationCount.value, 10);
+      const angles = [];
+      for (let i = 0; i < nRot; i++) angles.push((i * 360) / nRot);
 
-    // Arrow signal: EITHER inner has noticeably more texture than the fill,
-    // OR the darkest 10% of inner pixels are clearly darker than the fill.
-    // The OR makes us robust to small arrows where the std stays low.
-    const stdSignal = innerStd > annStd + 4 + t * 7;
-    const darkSignal = innerP10 < annMean - (22 + t * 18);
-    if (!stdSignal && !darkSignal) return false;
+      const polarities = [templateMat];
+      if (matchInverted.checked) {
+        const inv = new cv.Mat();
+        cv.bitwise_not(templateMat, inv);
+        polarities.push(inv);
+        tempMats.push(inv);
+      }
 
-    // The inner can't be substantially brighter than the fill (rules out
-    // highlights / pinholes in the middle of the disc).
-    if (innerMean > annMean + 30) return false;
+      for (const base of polarities) {
+        for (const ang of angles) {
+          const rt = rotatedTemplate(base, ang);
+          const result = new cv.Mat();
+          try {
+            cv.matchTemplate(gray, rt, result, cv.TM_CCOEFF_NORMED);
+            if (!maxResp) {
+              maxResp = result.clone();
+            } else {
+              cv.max(maxResp, result, maxResp);
+            }
+          } finally {
+            result.delete();
+            if (rt !== base) rt.delete();
+          }
+        }
+      }
 
-    return true;
+      const threshold = parseInt(matchThreshold.value, 10) / 100;
+      const minDist = Math.max(Math.floor(Math.min(tplW, tplH) * 0.7), 6);
+      const peaks = findPeaks(maxResp, threshold, minDist);
+
+      const r = Math.min(halfW, halfH) * 0.65;
+      const detected = peaks.map((p) => ({
+        x: p.x + halfW,
+        y: p.y + halfH,
+        r,
+        score: p.val,
+      }));
+
+      knots = sortKnotsReadingOrder(detected);
+      currentIndex = 0;
+
+      if (knots.length === 0) {
+        setStatus("No matches above threshold. Try lowering the match threshold or re-picking the template.");
+        setStepEnabled(false);
+        drawBaseImage();
+        zoomSection.hidden = true;
+      } else {
+        const bestScore = Math.max(...knots.map((k) => k.score));
+        setStatus(
+          `Found ${knots.length} matches in ${knotsByRow.length} rows ` +
+          `(best score ${bestScore.toFixed(2)}).`
+        );
+        setStepEnabled(true);
+        render();
+      }
+      updateCounter();
+    } catch (err) {
+      console.error(err);
+      setStatus("Matching failed: " + (err && err.message ? err.message : err));
+    } finally {
+      if (src) src.delete();
+      if (gray) gray.delete();
+      if (maxResp) maxResp.delete();
+      for (const m of tempMats) m.delete();
+    }
   }
 
   function sortKnotsReadingOrder(circles) {
@@ -194,90 +310,13 @@
     knotsByRow = rows;
     const flat = [];
     rows.forEach((r, rowIndex) => {
-      r.forEach((k) => {
-        k.rowIndex = rowIndex;
-        flat.push(k);
-      });
+      r.forEach((k) => { k.rowIndex = rowIndex; flat.push(k); });
     });
     return flat;
   }
 
-  function detectKnots() {
-    if (!cvReady || !currentImage) return;
-    setStatus("Detecting knots…");
-
-    requestAnimationFrame(() => {
-      let src, gray, blurred, circlesMat;
-      try {
-        src = cv.imread(canvas);
-        gray = new cv.Mat();
-        blurred = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        // Light blur only — a 5-pixel median wiped out weak outlines (esp. on
-        // the lighter circles), causing Hough to miss them.
-        cv.medianBlur(gray, blurred, 3);
-
-        circlesMat = new cv.Mat();
-        cv.HoughCircles(
-          blurred,
-          circlesMat,
-          cv.HOUGH_GRADIENT,
-          1,
-          parseInt(minDist.value, 10),
-          60, // Canny upper — was 100; lower lets weaker outlines (yellow) vote.
-          parseInt(sensitivity.value, 10),
-          parseInt(minRadius.value, 10),
-          parseInt(maxRadius.value, 10)
-        );
-
-        const candidates = [];
-        for (let i = 0; i < circlesMat.cols; i++) {
-          candidates.push({
-            x: circlesMat.data32F[i * 3],
-            y: circlesMat.data32F[i * 3 + 1],
-            r: circlesMat.data32F[i * 3 + 2],
-          });
-        }
-
-        // Filter to only circles that actually contain an arrow mark.
-        // Use the unblurred grayscale so the small arrow strokes are preserved.
-        const strictness = parseInt(arrowStrictness.value, 10);
-        const verified = candidates.filter((c) => hasArrow(gray, c, strictness));
-
-        knots = sortKnotsReadingOrder(verified);
-        currentIndex = 0;
-
-        if (knots.length === 0) {
-          setStatus(
-            `No knots detected (saw ${candidates.length} round shapes, none had an arrow). ` +
-            `Try lowering Arrow strictness or Sensitivity.`
-          );
-          setControlsEnabled(false);
-          drawBaseImage();
-          zoomSection.hidden = true;
-        } else {
-          setStatus(
-            `Detected ${knots.length} knots in ${knotsByRow.length} rows ` +
-            `(${candidates.length - knots.length} non-knot circles filtered out).`
-          );
-          setControlsEnabled(true);
-          render();
-        }
-        updateCounter();
-      } catch (err) {
-        console.error(err);
-        setStatus("Detection failed: " + (err && err.message ? err.message : err));
-      } finally {
-        if (src) src.delete();
-        if (gray) gray.delete();
-        if (blurred) blurred.delete();
-        if (circlesMat) circlesMat.delete();
-      }
-    });
-  }
-
   function drawRedRing(targetCtx, knot) {
-    const ringRadius = knot.r * 1.7 + 4;
+    const ringRadius = knot.r * 1.55 + 4;
     targetCtx.beginPath();
     targetCtx.arc(knot.x, knot.y, ringRadius + 3, 0, Math.PI * 2);
     targetCtx.lineWidth = 8;
@@ -291,7 +330,7 @@
     targetCtx.stroke();
   }
 
-  function drawAllDetectionsOverlay(targetCtx, list, scale = 1, ox = 0, oy = 0) {
+  function drawAllOverlay(targetCtx, list, scale = 1, ox = 0, oy = 0) {
     targetCtx.save();
     for (const k of list) {
       targetCtx.beginPath();
@@ -309,10 +348,7 @@
     }
     const knot = knots[currentIndex];
     const rowKnots = knotsByRow[knot.rowIndex];
-    if (!rowKnots || rowKnots.length === 0) {
-      zoomSection.hidden = true;
-      return;
-    }
+    if (!rowKnots || rowKnots.length === 0) { zoomSection.hidden = true; return; }
     zoomSection.hidden = false;
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -323,24 +359,18 @@
       if (k.y - r < minY) minY = k.y - r;
       if (k.y + r > maxY) maxY = k.y + r;
     }
-    const padX = 12, padY = 12;
-    minX = Math.max(0, minX - padX);
-    minY = Math.max(0, minY - padY);
-    maxX = Math.min(currentImage.naturalWidth, maxX + padX);
-    maxY = Math.min(currentImage.naturalHeight, maxY + padY);
+    minX = Math.max(0, minX - 12);
+    minY = Math.max(0, minY - 12);
+    maxX = Math.min(currentImage.naturalWidth, maxX + 12);
+    maxY = Math.min(currentImage.naturalHeight, maxY + 12);
 
     const cropW = maxX - minX;
     const cropH = maxY - minY;
     const containerWidth = Math.max(320, zoomSection.clientWidth - 40);
     const aspect = cropW / cropH;
-
     let zw = containerWidth;
     let zh = zw / aspect;
-    const maxH = 260;
-    if (zh > maxH) {
-      zh = maxH;
-      zw = zh * aspect;
-    }
+    if (zh > 260) { zh = 260; zw = zh * aspect; }
 
     zoomCanvas.width = Math.round(zw);
     zoomCanvas.height = Math.round(zh);
@@ -350,24 +380,19 @@
 
     const scale = zw / cropW;
     if (showAllToggle.checked) {
-      drawAllDetectionsOverlay(zctx, rowKnots, scale, minX, minY);
+      drawAllOverlay(zctx, rowKnots, scale, minX, minY);
     }
-
-    const cx = (knot.x - minX) * scale;
-    const cy = (knot.y - minY) * scale;
-    const cr = knot.r * scale;
-    drawRedRing(zctx, { x: cx, y: cy, r: cr });
+    drawRedRing(zctx, {
+      x: (knot.x - minX) * scale,
+      y: (knot.y - minY) * scale,
+      r: knot.r * scale,
+    });
   }
 
   function render() {
     drawBaseImage();
-    if (knots.length === 0) {
-      zoomSection.hidden = true;
-      return;
-    }
-    if (showAllToggle.checked) {
-      drawAllDetectionsOverlay(ctx, knots);
-    }
+    if (knots.length === 0) { zoomSection.hidden = true; return; }
+    if (showAllToggle.checked) drawAllOverlay(ctx, knots);
     drawRedRing(ctx, knots[currentIndex]);
     drawZoom();
     updateCounter();
@@ -389,41 +414,87 @@
     render();
   };
 
+  function canvasPointFromEvent(e) {
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX);
+    const clientY = e.clientY != null ? e.clientY : (e.touches && e.touches[0] && e.touches[0].clientY);
+    if (clientX == null || clientY == null) return null;
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
+    };
+  }
+
   fileInput.addEventListener("change", async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    setControlsEnabled(false);
+    setStepEnabled(false);
+    knots = []; knotsByRow = [];
+    if (templateMat) { templateMat.delete(); templateMat = null; }
+    templateCenter = null;
+    rematchBtn.disabled = true;
     try {
       setStatus("Loading image…");
       currentImage = await loadImageFromFile(file);
       drawBaseImage();
-      tuningSection.hidden = false;
+      templateSection.hidden = false;
+      zoomSection.hidden = true;
+      tplCtx.clearRect(0, 0, templateCanvas.width, templateCanvas.height);
       if (!cvReady) {
         setStatus("Waiting for image processor…");
         await waitForCv();
       }
-      detectKnots();
+      setStatus("Tap or click any single knot in the pattern to set the template.");
+      canvas.style.cursor = "crosshair";
     } catch (err) {
       console.error(err);
       setStatus("Could not load image: " + err.message);
     }
   });
 
+  canvas.addEventListener("click", (e) => {
+    const p = canvasPointFromEvent(e);
+    if (!p) return;
+    setTemplate(p.x, p.y);
+  });
+
+  canvas.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    const p = canvasPointFromEvent(e);
+    if (!p) return;
+    setTemplate(p.x, p.y);
+  }, { passive: false });
+
   nextBtn.addEventListener("click", next);
   prevBtn.addEventListener("click", prev);
   resetBtn.addEventListener("click", reset);
-  redetectBtn.addEventListener("click", () => { if (currentImage) detectKnots(); });
+  rematchBtn.addEventListener("click", () => {
+    // If template size changed since last extraction, re-extract first.
+    const currentSize = parseInt(templateSize.value, 10);
+    if (templateCenter && currentSize !== templateExtractedSize) {
+      setTemplate(templateCenter.x, templateCenter.y);
+    } else {
+      runMatching();
+    }
+  });
   zoomToggle.addEventListener("change", () => { if (knots.length) render(); });
   showAllToggle.addEventListener("change", () => { if (knots.length) render(); });
+
+  // Slider releases (`change`) trigger re-extract / re-match without spamming
+  // matching while the user is still dragging.
+  templateSize.addEventListener("change", () => {
+    if (templateCenter) setTemplate(templateCenter.x, templateCenter.y);
+  });
+  matchThreshold.addEventListener("change", () => { if (templateMat) runMatching(); });
+  rotationCount.addEventListener("change", () => { if (templateMat) runMatching(); });
+  matchInverted.addEventListener("change", () => { if (templateMat) runMatching(); });
 
   document.addEventListener("keydown", (e) => {
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
     if (knots.length === 0) return;
-    if (e.code === "Space" || e.code === "ArrowRight") {
-      e.preventDefault(); next();
-    } else if (e.code === "ArrowLeft") {
-      e.preventDefault(); prev();
-    }
+    if (e.code === "Space" || e.code === "ArrowRight") { e.preventDefault(); next(); }
+    else if (e.code === "ArrowLeft") { e.preventDefault(); prev(); }
   });
 
   waitForCv().then(() => {
