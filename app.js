@@ -28,6 +28,11 @@
   const rotationCount = document.getElementById("rotationCount");
   const matchInverted = document.getElementById("matchInverted");
 
+  const recolorSection = document.getElementById("recolorSection");
+  const recolorRulesEl = document.getElementById("recolorRules");
+  const addRecolorBtn = document.getElementById("addRecolorBtn");
+  const clearRecolorBtn = document.getElementById("clearRecolorBtn");
+
   for (const [input, valueId] of [
     [templateSize, "templateSizeValue"],
     [matchThreshold, "matchThresholdValue"],
@@ -39,7 +44,8 @@
   }
 
   let cvReady = false;
-  let currentImage = null;
+  let currentImage = null;            // original uploaded image (HTMLImageElement)
+  let displayCanvas = null;           // off-screen canvas with recoloured pixels (or null)
   let templateMat = null;             // grayscale cv.Mat of the user-picked template
   let templateCenter = null;          // {x, y} in canvas pixel space
   let templateExtractedSize = 0;      // px size used when extracted
@@ -47,6 +53,8 @@
   let knots = [];                     // [{x, y, r, rowIndex, score}]
   let knotsByRow = [];
   let currentIndex = 0;
+  let recolorRules = [];              // [{el, fromInput, toInput, tolInput, eyedropperBtn}]
+  let eyedropperTarget = null;        // {rule, input} when waiting for a colour pick
 
   const setStatus = (text) => { statusEl.textContent = text; };
   const updateCounter = () => {
@@ -139,10 +147,172 @@
     });
   }
 
+  function getDisplaySource() {
+    return displayCanvas || currentImage;
+  }
+
+  function getSourceWidth(src) {
+    return src.naturalWidth || src.width;
+  }
+
+  function getSourceHeight(src) {
+    return src.naturalHeight || src.height;
+  }
+
   function drawBaseImage() {
-    canvas.width = currentImage.naturalWidth;
-    canvas.height = currentImage.naturalHeight;
-    ctx.drawImage(currentImage, 0, 0);
+    const src = getDisplaySource();
+    canvas.width = getSourceWidth(src);
+    canvas.height = getSourceHeight(src);
+    ctx.drawImage(src, 0, 0);
+  }
+
+  function hexToRgb(hex) {
+    const s = (hex || "").replace("#", "");
+    if (s.length !== 6) return { r: 0, g: 0, b: 0 };
+    return {
+      r: parseInt(s.substring(0, 2), 16),
+      g: parseInt(s.substring(2, 4), 16),
+      b: parseInt(s.substring(4, 6), 16),
+    };
+  }
+
+  function rgbToHex(r, g, b) {
+    const h = (n) => Math.max(0, Math.min(255, n | 0)).toString(16).padStart(2, "0");
+    return "#" + h(r) + h(g) + h(b);
+  }
+
+  function rebuildDisplayCanvas() {
+    if (!currentImage) return;
+    if (recolorRules.length === 0) {
+      displayCanvas = null;
+      return;
+    }
+    if (!displayCanvas) displayCanvas = document.createElement("canvas");
+    displayCanvas.width = currentImage.naturalWidth;
+    displayCanvas.height = currentImage.naturalHeight;
+    const dctx = displayCanvas.getContext("2d");
+    dctx.drawImage(currentImage, 0, 0);
+
+    const imgData = dctx.getImageData(0, 0, displayCanvas.width, displayCanvas.height);
+    const data = imgData.data;
+
+    const compiled = recolorRules.map((r) => {
+      const f = hexToRgb(r.fromInput.value);
+      const t = hexToRgb(r.toInput.value);
+      const tol = parseInt(r.tolInput.value, 10);
+      return { fr: f.r, fg: f.g, fb: f.b, tr: t.r, tg: t.g, tb: t.b, tol2: tol * tol };
+    });
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      for (const c of compiled) {
+        const dr = r - c.fr, dg = g - c.fg, db = b - c.fb;
+        if (dr * dr + dg * dg + db * db <= c.tol2) {
+          data[i] = c.tr; data[i + 1] = c.tg; data[i + 2] = c.tb;
+          break;
+        }
+      }
+    }
+    dctx.putImageData(imgData, 0, 0);
+  }
+
+  function applyRecolor() {
+    rebuildDisplayCanvas();
+    drawBaseImage();
+    if (templateCenter && templateMat) {
+      // Re-extract template from the now-recoloured canvas, then re-match.
+      setTemplate(templateCenter.x, templateCenter.y);
+    } else if (knots.length) {
+      if (showAllToggle.checked) drawAllOverlay(ctx, knots);
+      drawRedRing(ctx, knots[currentIndex]);
+      drawZoom();
+    }
+  }
+
+  function activateEyedropper(rule) {
+    if (eyedropperTarget) {
+      eyedropperTarget.rule.eyedropperBtn.classList.remove("active");
+    }
+    eyedropperTarget = { rule, input: rule.fromInput };
+    rule.eyedropperBtn.classList.add("active");
+    canvas.style.cursor = "crosshair";
+    setStatus('Tap a colour in the pattern to set it as the "from" colour.');
+  }
+
+  function cancelEyedropper() {
+    if (eyedropperTarget) {
+      eyedropperTarget.rule.eyedropperBtn.classList.remove("active");
+      eyedropperTarget = null;
+    }
+    canvas.style.cursor = !templateMat
+      ? "crosshair"
+      : (templateLocked ? "pointer" : "crosshair");
+  }
+
+  function pickColorAt(px, py) {
+    if (!eyedropperTarget) return;
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.round(px)));
+    const y = Math.max(0, Math.min(canvas.height - 1, Math.round(py)));
+    const data = ctx.getImageData(x, y, 1, 1).data;
+    const hex = rgbToHex(data[0], data[1], data[2]);
+    const target = eyedropperTarget.input;
+    target.value = hex;
+    setStatus("Picked " + hex);
+    cancelEyedropper();
+    applyRecolor();
+  }
+
+  function addRecolorRule(initialFromHex) {
+    const ruleEl = document.createElement("div");
+    ruleEl.className = "recolor-rule";
+    ruleEl.innerHTML = `
+      <input type="color" class="from-color" value="${initialFromHex || "#cca22d"}">
+      <button type="button" class="eyedropper" title="Pick the &quot;from&quot; colour from the pattern">Pick</button>
+      <span class="arrow">&rarr;</span>
+      <input type="color" class="to-color" value="#0066cc">
+      <input type="range" class="tolerance" min="5" max="160" value="50" title="Colour tolerance">
+      <button type="button" class="remove-rule" title="Remove rule" aria-label="Remove">&times;</button>
+    `;
+
+    const fromInput = ruleEl.querySelector(".from-color");
+    const toInput = ruleEl.querySelector(".to-color");
+    const tolInput = ruleEl.querySelector(".tolerance");
+    const eyedropperBtn = ruleEl.querySelector(".eyedropper");
+    const removeBtn = ruleEl.querySelector(".remove-rule");
+
+    const rule = { el: ruleEl, fromInput, toInput, tolInput, eyedropperBtn };
+    recolorRules.push(rule);
+    recolorRulesEl.appendChild(ruleEl);
+
+    fromInput.addEventListener("change", applyRecolor);
+    toInput.addEventListener("change", applyRecolor);
+
+    let tolDebounce;
+    tolInput.addEventListener("input", () => {
+      clearTimeout(tolDebounce);
+      tolDebounce = setTimeout(applyRecolor, 120);
+    });
+
+    eyedropperBtn.addEventListener("click", () => {
+      if (eyedropperTarget && eyedropperTarget.rule === rule) {
+        cancelEyedropper();
+      } else {
+        activateEyedropper(rule);
+      }
+    });
+
+    removeBtn.addEventListener("click", () => {
+      ruleEl.remove();
+      recolorRules = recolorRules.filter((r) => r !== rule);
+      if (eyedropperTarget && eyedropperTarget.rule === rule) cancelEyedropper();
+      applyRecolor();
+    });
+  }
+
+  function resetRecolorRules() {
+    recolorRules.forEach((r) => r.el.remove());
+    recolorRules = [];
+    if (eyedropperTarget) cancelEyedropper();
   }
 
   function setTemplate(centerX, centerY) {
@@ -411,10 +581,13 @@
       if (k.y - r < minY) minY = k.y - r;
       if (k.y + r > maxY) maxY = k.y + r;
     }
+    const src = getDisplaySource();
+    const srcW = getSourceWidth(src);
+    const srcH = getSourceHeight(src);
     minX = Math.max(0, minX - 12);
     minY = Math.max(0, minY - 12);
-    maxX = Math.min(currentImage.naturalWidth, maxX + 12);
-    maxY = Math.min(currentImage.naturalHeight, maxY + 12);
+    maxX = Math.min(srcW, maxX + 12);
+    maxY = Math.min(srcH, maxY + 12);
 
     const cropW = maxX - minX;
     const cropH = maxY - minY;
@@ -428,7 +601,7 @@
     zoomCanvas.height = Math.round(zh);
     zctx.imageSmoothingEnabled = true;
     zctx.imageSmoothingQuality = "high";
-    zctx.drawImage(currentImage, minX, minY, cropW, cropH, 0, 0, zw, zh);
+    zctx.drawImage(src, minX, minY, cropW, cropH, 0, 0, zw, zh);
 
     const scale = zw / cropW;
     if (showAllToggle.checked) {
@@ -487,11 +660,14 @@
     rematchBtn.disabled = true;
     lockBtn.disabled = true;
     setTemplateLocked(false);
+    resetRecolorRules();
+    displayCanvas = null;
     try {
       setStatus("Loading image…");
       currentImage = await loadImageFromFile(file);
       drawBaseImage();
       templateSection.hidden = false;
+      recolorSection.hidden = false;
       zoomSection.hidden = true;
       tplCtx.clearRect(0, 0, templateCanvas.width, templateCanvas.height);
       if (!cvReady) {
@@ -507,6 +683,10 @@
   });
 
   function handleCanvasPick(p) {
+    if (eyedropperTarget) {
+      pickColorAt(p.x, p.y);
+      return;
+    }
     if (templateLocked) {
       jumpToNearestKnot(p.x, p.y);
     } else {
@@ -536,6 +716,17 @@
   rowInput.addEventListener("change", () => {
     const r = parseInt(rowInput.value, 10);
     if (Number.isFinite(r)) gotoRow(r - 1);
+  });
+
+  addRecolorBtn.addEventListener("click", () => {
+    addRecolorRule();
+    if (recolorRules.length === 1) applyRecolor();
+  });
+
+  clearRecolorBtn.addEventListener("click", () => {
+    if (recolorRules.length === 0) return;
+    resetRecolorRules();
+    applyRecolor();
   });
 
   nextBtn.addEventListener("click", next);
