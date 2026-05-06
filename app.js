@@ -94,19 +94,21 @@
   }
 
   // Returns true if a small dark mark (arrow) lives inside the circle on top of
-  // a relatively uniform color fill.
+  // a relatively uniform colour fill. Works for both dark and light fills:
+  // the annulus is sampled tightly inside the outline so its colour doesn't
+  // matter, only that it's uniform.
   function hasArrow(grayMat, c, strictness) {
-    const innerR = c.r * 0.45; // central area where the arrow lives
-    const annulusR1 = c.r * 0.55;
-    const annulusR2 = c.r * 0.95; // ring just inside the outline
-    const range = Math.ceil(c.r);
+    const innerR = c.r * 0.45;   // central area where the arrow lives
+    const annR1 = c.r * 0.50;    // ring of pure fill, well inside the outline
+    const annR2 = c.r * 0.75;
+    const range = Math.ceil(annR2 + 1);
     const cx = Math.round(c.x), cy = Math.round(c.y);
 
     const innerVals = [];
     const annulusVals = [];
     const innerR2 = innerR * innerR;
-    const ann1Sq = annulusR1 * annulusR1;
-    const ann2Sq = annulusR2 * annulusR2;
+    const ann1Sq = annR1 * annR1;
+    const ann2Sq = annR2 * annR2;
 
     for (let dy = -range; dy <= range; dy++) {
       const y = cy + dy;
@@ -137,19 +139,24 @@
     const innerMean = mean(innerVals);
     const innerStd = std(innerVals, innerMean);
 
-    // Strictness slider: 0 = lax, 100 = strict.
     const t = strictness / 100;
-    const innerStdMin = 6 + t * 14;          // arrow needs to create some texture
-    const annStdMax = 50 - t * 25;            // fill should be reasonably uniform
-    const annMeanMax = 235 - t * 25;          // fill must not be pure white
-    const innerDarker = innerMean < annMean + 4;  // arrow makes the centre slightly darker on average
 
-    return (
-      innerStd > innerStdMin &&
-      annStd < annStdMax &&
-      annMean < annMeanMax &&
-      innerDarker
-    );
+    // Fill should be reasonably uniform — but the colour itself doesn't matter.
+    const annStdMax = 18 + (1 - t) * 25; // 18..43
+    if (annStd > annStdMax) return false;
+
+    // Reject if the candidate is sitting on plain white background (no fill).
+    if (annMean > 245) return false;
+
+    // The arrow contributes extra texture beyond what's in the fill ring.
+    const minExtraStd = 4 + t * 9; // 4..13
+    if (innerStd < annStd + minExtraStd) return false;
+
+    // The arrow is a dark mark, so the inner mean should be at least as dark
+    // as the fill (allow a small margin for noise / specular highlights).
+    if (innerMean > annMean + 25) return false;
+
+    return true;
   }
 
   function sortKnotsReadingOrder(circles) {
