@@ -176,6 +176,7 @@ button:disabled {
   width: 120px;
 }
 
+.template-section summary,
 .recolor-section summary {
   cursor: pointer;
   font-size: 13px;
@@ -183,6 +184,10 @@ button:disabled {
   color: #4a4640;
   user-select: none;
   padding: 2px 0;
+}
+
+.template-section details[open] > summary {
+  margin-bottom: 10px;
 }
 
 .recolor-rules {
