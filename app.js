@@ -181,6 +181,43 @@
     return "#" + h(r) + h(g) + h(b);
   }
 
+  function rgbToHsv(r, g, b) {
+    const rn = r / 255, gn = g / 255, bn = b / 255;
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const d = max - min;
+    let h = 0;
+    if (d > 0) {
+      if (max === rn) h = ((gn - bn) / d) % 6;
+      else if (max === gn) h = (bn - rn) / d + 2;
+      else h = (rn - gn) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : (d / max) * 100;
+    const v = max * 100;
+    return { h, s, v };
+  }
+
+  function hsvToRgb(h, s, v) {
+    s /= 100; v /= 100;
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+    let rp, gp, bp;
+    if (h < 60)       { rp = c; gp = x; bp = 0; }
+    else if (h < 120) { rp = x; gp = c; bp = 0; }
+    else if (h < 180) { rp = 0; gp = c; bp = x; }
+    else if (h < 240) { rp = 0; gp = x; bp = c; }
+    else if (h < 300) { rp = x; gp = 0; bp = c; }
+    else              { rp = c; gp = 0; bp = x; }
+    return {
+      r: Math.round((rp + m) * 255),
+      g: Math.round((gp + m) * 255),
+      b: Math.round((bp + m) * 255),
+    };
+  }
+
   function rebuildDisplayCanvas() {
     if (!currentImage) return;
     if (recolorRules.length === 0) {
@@ -196,11 +233,24 @@
     const imgData = dctx.getImageData(0, 0, displayCanvas.width, displayCanvas.height);
     const data = imgData.data;
 
+    // Pre-compile each rule. We match in RGB (intuitive for the tolerance
+    // slider) but apply the swap in HSV: keep the pixel's *relative* value
+    // so darker variants of the source colour (e.g. arrow strokes inside a
+    // filled circle) become correspondingly dark variants of the target,
+    // instead of all collapsing to the same flat target colour and erasing
+    // the arrow.
     const compiled = recolorRules.map((r) => {
       const f = hexToRgb(r.fromInput.value);
       const t = hexToRgb(r.toInput.value);
+      const fHsv = rgbToHsv(f.r, f.g, f.b);
+      const tHsv = rgbToHsv(t.r, t.g, t.b);
       const tol = parseInt(r.tolInput.value, 10);
-      return { fr: f.r, fg: f.g, fb: f.b, tr: t.r, tg: t.g, tb: t.b, tol2: tol * tol };
+      return {
+        fr: f.r, fg: f.g, fb: f.b,
+        toH: tHsv.h, toS: tHsv.s, toV: tHsv.v,
+        fromV: Math.max(1, fHsv.v),
+        tol2: tol * tol,
+      };
     });
 
     for (let i = 0; i < data.length; i += 4) {
@@ -208,7 +258,10 @@
       for (const c of compiled) {
         const dr = r - c.fr, dg = g - c.fg, db = b - c.fb;
         if (dr * dr + dg * dg + db * db <= c.tol2) {
-          data[i] = c.tr; data[i + 1] = c.tg; data[i + 2] = c.tb;
+          const pHsv = rgbToHsv(r, g, b);
+          const newV = Math.min(100, c.toV * (pHsv.v / c.fromV));
+          const out = hsvToRgb(c.toH, c.toS, newV);
+          data[i] = out.r; data[i + 1] = out.g; data[i + 2] = out.b;
           break;
         }
       }
